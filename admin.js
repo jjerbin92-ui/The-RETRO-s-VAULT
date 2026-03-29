@@ -1,5 +1,5 @@
 // Security Check for Admin Access
-const passcode = prompt("Enter Admin Passcode (Hint: RETRO2026):");
+const passcode = prompt("Enter Admin Passcode:");
 if (passcode !== "RETRO2026") {
     alert("Unauthorized Access!");
     window.location.href = "index.html";
