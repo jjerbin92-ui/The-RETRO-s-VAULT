@@ -393,6 +393,10 @@ body {
     display: none;
 }
 
+.hidden {
+    display: none !important;
+}
+
 /* Admin Form Container */
 .admin-container {
     max-width: 600px;

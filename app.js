@@ -1,47 +1,232 @@
-// Initialize empty array instead of mock data
-const MOCK_PRODUCTS = [];
+// ============================================================
+// JSONBIN.IO CONFIGURATION (Cloud Sync)
+// ============================================================
+const MASTER_KEY = "$2a$10$e6BNHkLwsUDMBX84u5s1BOoqC4u0./AemztoL8E1.RZKWuN3UVnd6";
+const JSONBIN_BASE = "https://api.jsonbin.io/v3/b";
+const LOCAL_PINS_KEY = "retrosVaultPins";       // localStorage key for pins
+const LOCAL_BIN_KEY  = "retroVaultBinId";       // localStorage key for bin ID
 
+// ✅ Hardcoded Bin ID — ALL devices always use this same bin
+let BIN_ID = "69c904256860e0745bffaf1c";
+
+// ============================================================
 // STATE
-let currentProducts = [];
+// ============================================================
+let currentProducts = JSON.parse(localStorage.getItem(LOCAL_PINS_KEY)) || [];
 let wishlist = JSON.parse(localStorage.getItem('retrosVaultWishlist')) || [];
 let activeCategory = 'all';
 let searchQuery = '';
+const FALLBACK_IMG = "https://images.unsplash.com/photo-1584438784894-089d6a62b8fa?w=500&q=80";
 
+// ============================================================
 // DOM ELEMENTS
-const productGrid = document.getElementById('productGrid');
-const searchInput = document.getElementById('searchInput');
-const categoryBtns = document.querySelectorAll('.category-btn');
-const wishlistCount = document.getElementById('wishlistCount');
-const wishlistToggle = document.getElementById('wishlistToggle');
-const emptyState = document.getElementById('emptyState');
-const toast = document.getElementById('toast');
-const mobileMenuBtn = document.getElementById('mobileMenuBtn');
-const mobileCategories = document.getElementById('mobileCategories');
+// ============================================================
+const productGrid       = document.getElementById('productGrid');
+const searchInput       = document.getElementById('searchInput');
+const categoryBtns      = document.querySelectorAll('.category-btn');
+const wishlistCount     = document.getElementById('wishlistCount');
+const wishlistToggle    = document.getElementById('wishlistToggle');
+const emptyState        = document.getElementById('emptyState');
+const toast             = document.getElementById('toast');
+const mobileMenuBtn     = document.getElementById('mobileMenuBtn');
+const mobileCategories  = document.getElementById('mobileCategories');
+const adminPanel        = document.getElementById('adminPanel');
+const adminLoginBtn     = document.getElementById('adminLoginBtn');
+const mobileAdminLoginBtn = document.getElementById('mobileAdminLoginBtn');
+const backToStoreBtn    = document.getElementById('backToStoreBtn');
+const form              = document.getElementById('addPinForm');
+const titleInp          = document.getElementById('pTitle');
+const descInp           = document.getElementById('pDesc');
+const linkInp           = document.getElementById('pLink');
+const catInp            = document.getElementById('pCategory');
+const imgInp            = document.getElementById('pImage');
+const submitBtn         = document.getElementById('submitBtn');
+const adminProductList  = document.getElementById('adminProductList');
 
-// INITIALIZE APP
-function init() {
-    loadProductsFromStorage();
-    updateWishlistCount();
-    setupEventListeners();
-    filterAndRender();
-}
+// ============================================================
+// JSONBIN CLOUD SYNC (background — never blocks the UI)
+// ============================================================
 
-// SIMULATE FETCHING DATA
-function loadProductsFromStorage() {
-    let storedProducts = JSON.parse(localStorage.getItem('retrosVaultProducts'));
-    if (storedProducts && storedProducts.length > 0) {
-        // Automatically purge the old hardcoded mock items if they are stuck in the browser
-        const mockIds = ["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8"];
-        storedProducts = storedProducts.filter(p => !mockIds.includes(p.id));
-        
-        currentProducts = storedProducts;
-        localStorage.setItem('retrosVaultProducts', JSON.stringify(currentProducts));
-    } else {
-        currentProducts = [];
+async function cloudCreateBin() {
+    try {
+        const res = await fetch(JSONBIN_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Master-Key': MASTER_KEY,
+                'X-Bin-Name': 'retros-vault-pins',
+                'X-Bin-Private': 'false'
+            },
+            body: JSON.stringify(currentProducts)
+        });
+        const data = await res.json();
+        if (data.metadata && data.metadata.id) {
+            BIN_ID = data.metadata.id;
+            localStorage.setItem(LOCAL_BIN_KEY, BIN_ID);
+            console.log('☁️ Cloud bin created:', BIN_ID);
+        }
+    } catch (e) {
+        console.warn('Cloud create failed (offline?):', e.message);
     }
 }
 
+async function cloudPush(pins) {
+    if (!BIN_ID) {
+        await cloudCreateBin();
+        return;
+    }
+    try {
+        await fetch(`${JSONBIN_BASE}/${BIN_ID}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Master-Key': MASTER_KEY
+            },
+            body: JSON.stringify(pins)
+        });
+        console.log('☁️ Cloud synced');
+    } catch (e) {
+        console.warn('Cloud push failed (offline?):', e.message);
+    }
+}
+
+async function cloudPull() {
+    if (!BIN_ID) return null;
+    try {
+        const res = await fetch(`${JSONBIN_BASE}/${BIN_ID}/latest`, {
+            headers: { 'X-Master-Key': MASTER_KEY }
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data.record || null;
+    } catch (e) {
+        console.warn('Cloud pull failed (offline?):', e.message);
+        return null;
+    }
+}
+
+// ============================================================
+// INITIALIZE APP
+// ============================================================
+async function init() {
+    updateWishlistCount();
+    setupEventListeners();
+
+    // 1. Show local pins IMMEDIATELY (no loading delay)
+    filterAndRender();
+
+    // 2. Try to sync from cloud in the background
+    syncFromCloud();
+}
+
+async function syncFromCloud() {
+    if (!BIN_ID) {
+        // No bin yet — push local data to create one
+        if (currentProducts.length > 0) {
+            await cloudCreateBin();
+        }
+        return;
+    }
+
+    const cloudPins = await cloudPull();
+    if (!cloudPins) return; // offline or error — keep showing local
+
+    // Merge: use cloud data if it has more/newer pins
+    if (cloudPins.length > currentProducts.length) {
+        currentProducts = cloudPins;
+        localStorage.setItem(LOCAL_PINS_KEY, JSON.stringify(currentProducts));
+        filterAndRender();
+        console.log('☁️ Synced from cloud —', cloudPins.length, 'pins loaded');
+    }
+}
+
+// ============================================================
+// FILTER & RENDER
+// ============================================================
+function filterAndRender() {
+    let filtered = currentProducts;
+
+    if (activeCategory === 'wishlist') {
+        filtered = currentProducts.filter(p => wishlist.includes(p.id));
+    } else if (activeCategory !== 'all') {
+        filtered = currentProducts.filter(p => p.category === activeCategory);
+    }
+
+    if (searchQuery) {
+        filtered = filtered.filter(p =>
+            p.title.toLowerCase().includes(searchQuery) ||
+            p.description.toLowerCase().includes(searchQuery) ||
+            p.category.toLowerCase().includes(searchQuery)
+        );
+    }
+
+    renderGrid(filtered);
+}
+
+// ============================================================
+// RENDER GRID
+// ============================================================
+function renderGrid(products) {
+    productGrid.innerHTML = '';
+
+    if (products.length === 0) {
+        emptyState.classList.remove('hidden');
+        return;
+    } else {
+        emptyState.classList.add('hidden');
+    }
+
+    const fragment = document.createDocumentFragment();
+
+    products.forEach(product => {
+        const isSaved = wishlist.includes(product.id);
+        const card = document.createElement('div');
+        card.className = 'pin-card';
+        card.innerHTML = `
+            <div class="pin-img-wrapper">
+                <img src="${product.image}" loading="lazy" alt="${product.title}" onerror="this.src='https://via.placeholder.com/500x700?text=No+Image';">
+                <div class="pin-overlay">
+                    <button class="save-btn ${isSaved ? 'saved' : ''}" data-id="${product.id}">
+                        ${isSaved ? 'Saved' : 'Save'}
+                    </button>
+                    <div class="btn-bottom-container">
+                        <a href="${product.link}" target="_blank" class="buy-btn">
+                            <i class="fa-solid fa-arrow-up-right-from-square external-icon"></i> View
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="pin-info">
+                <h3 class="pin-title">${product.title}</h3>
+                <p class="pin-desc">${product.description}</p>
+                <div class="pin-author">
+                    <div class="author-img"></div>
+                    <span>${product.author || 'RetroVault'}</span>
+                </div>
+            </div>
+        `;
+
+        const saveBtn = card.querySelector('.save-btn');
+        saveBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleWishlist(product.id, saveBtn);
+        });
+
+        card.addEventListener('click', (e) => {
+            if (!e.target.closest('.save-btn') && !e.target.closest('.buy-btn')) {
+                window.open(product.link, '_blank');
+            }
+        });
+
+        fragment.appendChild(card);
+    });
+
+    productGrid.appendChild(fragment);
+}
+
+// ============================================================
 // EVENT LISTENERS
+// ============================================================
 function setupEventListeners() {
     // Search
     searchInput.addEventListener('input', (e) => {
@@ -49,17 +234,14 @@ function setupEventListeners() {
         filterAndRender();
     });
 
-    // Categories (Desktop and Mobile)
+    // Category Buttons
     categoryBtns.forEach(btn => {
         btn.addEventListener('click', (e) => {
-            // Remove active from all
             categoryBtns.forEach(b => b.classList.remove('active'));
-            // Add active to matching dataset category (keeps mobile/desktop in sync)
             const targetCat = e.target.dataset.category;
             categoryBtns.forEach(b => {
                 if (b.dataset.category === targetCat) b.classList.add('active');
             });
-            
             activeCategory = targetCat;
             filterAndRender();
         });
@@ -78,94 +260,80 @@ function setupEventListeners() {
     mobileMenuBtn.addEventListener('click', () => {
         mobileCategories.classList.toggle('show');
     });
-}
 
-// FILTER & RENDER
-function filterAndRender() {
-    let filtered = currentProducts;
+    // Admin Login
+    const handleAdminLogin = () => {
+        const passcode = prompt("Enter Admin Passcode:");
+        if (passcode === "RETRO2026") {
+            document.querySelector('.search-bar').style.visibility = 'hidden';
+            productGrid.classList.add('hidden');
+            emptyState.classList.add('hidden');
+            adminPanel.classList.remove('hidden');
+            mobileCategories.classList.remove('show');
+            loadAdminPins();
+        } else if (passcode !== null) {
+            alert("Unauthorized Access!");
+        }
+    };
 
-    // 1. Filter by category or wishlist
-    if (activeCategory === 'wishlist') {
-        filtered = currentProducts.filter(p => wishlist.includes(p.id));
-    } else if (activeCategory !== 'all') {
-        filtered = currentProducts.filter(p => p.category === activeCategory);
-    }
+    adminLoginBtn.addEventListener('click', handleAdminLogin);
+    mobileAdminLoginBtn.addEventListener('click', handleAdminLogin);
 
-    // 2. Filter by search query
-    if (searchQuery) {
-        filtered = filtered.filter(p => 
-            p.title.toLowerCase().includes(searchQuery) || 
-            p.description.toLowerCase().includes(searchQuery) ||
-            p.category.toLowerCase().includes(searchQuery)
-        );
-    }
-
-    renderGrid(filtered);
-}
-
-// RENDER HTML TEMPLATE
-function renderGrid(products) {
-    productGrid.innerHTML = '';
-
-    if (products.length === 0) {
-        emptyState.classList.remove('hidden');
-        return;
-    } else {
-        emptyState.classList.add('hidden');
-    }
-
-    const fragment = document.createDocumentFragment();
-
-    products.forEach(product => {
-        const isSaved = wishlist.includes(product.id);
-        
-        const card = document.createElement('div');
-        card.className = 'pin-card';
-        card.innerHTML = `
-            <div class="pin-img-wrapper">
-                <img src="${product.image}" loading="lazy" alt="${product.title}" onerror="this.src='https://via.placeholder.com/500x700?text=No+Image';">
-                <div class="pin-overlay">
-                    <button class="save-btn ${isSaved ? 'saved' : ''}" data-id="${product.id}">
-                        ${isSaved ? 'Saved' : 'Save'}
-                    </button>
-                    <div class="btn-bottom-container">
-                        <a href="${product.link}" target="_blank" class="buy-btn">
-                            <i class="fa-solid fa-arrow-up-right-from-square external-icon"></i> View 
-                        </a>
-                    </div>
-                </div>
-            </div>
-            <div class="pin-info">
-                <h3 class="pin-title">${product.title}</h3>
-                <p class="pin-desc">${product.description}</p>
-                <div class="pin-author">
-                    <div class="author-img"></div>
-                    <span>${product.author || 'RetroVault'}</span>
-                </div>
-            </div>
-        `;
-
-        // Handle Save Button click
-        const saveBtn = card.querySelector('.save-btn');
-        saveBtn.addEventListener('click', (e) => {
-            e.stopPropagation(); // prevent clicking other things
-            toggleWishlist(product.id, saveBtn);
-        });
-
-        // Make entire card except buttons open external link
-        card.addEventListener('click', (e) => {
-            if (!e.target.closest('.save-btn') && !e.target.closest('.buy-btn')) {
-                window.open(product.link, '_blank');
-            }
-        });
-
-        fragment.appendChild(card);
+    // Back to Store
+    backToStoreBtn.addEventListener('click', () => {
+        document.querySelector('.search-bar').style.visibility = 'visible';
+        productGrid.classList.remove('hidden');
+        adminPanel.classList.add('hidden');
+        filterAndRender();
     });
 
-    productGrid.appendChild(fragment);
+    // Submit New Pin
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        submitBtn.textContent = 'Pinning...';
+        submitBtn.disabled = true;
+
+        try {
+            const file = imgInp.files[0];
+            let base64Img = FALLBACK_IMG;
+            if (file) base64Img = await compressImage(file);
+
+            const newPin = {
+                id: 'p' + Date.now(),
+                title: titleInp.value.trim(),
+                description: descInp.value.trim(),
+                link: linkInp.value.trim(),
+                category: catInp.value,
+                image: base64Img,
+                author: "Store Admin",
+                createdAt: Date.now()
+            };
+
+            // Save locally FIRST (instant, always works)
+            currentProducts.unshift(newPin);
+            localStorage.setItem(LOCAL_PINS_KEY, JSON.stringify(currentProducts));
+
+            showToast("✅ Pin added to Vault!");
+            form.reset();
+            submitBtn.textContent = 'Pin Product';
+            submitBtn.disabled = false;
+            loadAdminPins();
+
+            // Push to cloud in background (doesn't block UI)
+            cloudPush(currentProducts);
+
+        } catch (error) {
+            console.error("Error saving pin:", error);
+            showToast("❌ Error adding pin. Try again.");
+            submitBtn.textContent = 'Pin Product';
+            submitBtn.disabled = false;
+        }
+    });
 }
 
-// WISHLIST LOGIC
+// ============================================================
+// WISHLIST
+// ============================================================
 function toggleWishlist(id, btnElement) {
     if (wishlist.includes(id)) {
         wishlist = wishlist.filter(itemId => itemId !== id);
@@ -177,32 +345,101 @@ function toggleWishlist(id, btnElement) {
         btnElement.textContent = 'Saved';
         showToast('Saved to your Vault!');
     }
-    
-    // Save to local storage
     localStorage.setItem('retrosVaultWishlist', JSON.stringify(wishlist));
     updateWishlistCount();
-
-    // If currently viewing wishlist, refresh to hide removed items
-    if (activeCategory === 'wishlist') {
-        filterAndRender();
-    }
+    if (activeCategory === 'wishlist') filterAndRender();
 }
 
 function updateWishlistCount() {
     wishlistCount.textContent = wishlist.length;
 }
 
-// TOAST NOTIFICATION
+// ============================================================
+// TOAST
+// ============================================================
 let toastTimeout;
 function showToast(message) {
     toast.textContent = message;
     toast.classList.add('show');
-    
     clearTimeout(toastTimeout);
-    toastTimeout = setTimeout(() => {
-        toast.classList.remove('show');
-    }, 3000);
+    toastTimeout = setTimeout(() => toast.classList.remove('show'), 3000);
 }
 
-// Run app
+// ============================================================
+// ADMIN: LOAD PINS INTO ADMIN LIST
+// ============================================================
+function loadAdminPins() {
+    adminProductList.innerHTML = '';
+    if (currentProducts.length === 0) {
+        adminProductList.innerHTML = '<p style="text-align:center; color: var(--text-secondary); padding: 2rem 0;">No pins yet. Add your first item above!</p>';
+        return;
+    }
+    currentProducts.forEach(p => {
+        const item = document.createElement('div');
+        item.setAttribute('style', 'display: flex; justify-content: space-between; align-items: center; padding: 1rem; border: 1px solid #eaeaea; border-radius: 8px; background: #fafafa;');
+        item.innerHTML = `
+            <div style="display:flex; align-items:center; gap: 1rem;">
+                <img src="${p.image}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 6px;" onerror="this.src='https://via.placeholder.com/48'"/>
+                <div style="font-weight: 500; font-size: 0.95rem;">
+                    ${p.title}<br>
+                    <small style="color:var(--text-secondary); font-size: 0.8rem;">${p.category.toUpperCase()}</small>
+                </div>
+            </div>
+            <button class="delete-btn" style="background:#cc0000; color:white; border:none; padding: 0.4rem 0.8rem; border-radius:6px; font-weight: 600; cursor:pointer;">
+                Delete
+            </button>
+        `;
+        item.querySelector('.delete-btn').addEventListener('click', () => deleteAdminPin(p.id));
+        adminProductList.appendChild(item);
+    });
+}
+
+// ============================================================
+// ADMIN: DELETE PIN
+// ============================================================
+async function deleteAdminPin(id) {
+    if (!confirm("Are you sure you want to permanently delete this pin?")) return;
+    currentProducts = currentProducts.filter(p => p.id !== id);
+    localStorage.setItem(LOCAL_PINS_KEY, JSON.stringify(currentProducts));
+    cloudPush(currentProducts); // sync to cloud
+    showToast("Pin deleted!");
+    loadAdminPins();
+}
+
+// ============================================================
+// IMAGE COMPRESSION
+// ============================================================
+function compressImage(file, maxSize = 800) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target.result;
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                let width = img.width;
+                let height = img.height;
+                if (width > height && width > maxSize) {
+                    height *= maxSize / width;
+                    width = maxSize;
+                } else if (height > maxSize) {
+                    width *= maxSize / height;
+                    height = maxSize;
+                }
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                resolve(canvas.toDataURL('image/jpeg', 0.7));
+            };
+            img.onerror = () => reject(new Error('Failed to load image'));
+        };
+        reader.onerror = error => reject(error);
+    });
+}
+
+// ============================================================
+// RUN APP
+// ============================================================
 document.addEventListener('DOMContentLoaded', init);

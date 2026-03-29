@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vault Bin ID Finder</title>
+<style>
+  body { font-family: monospace; background: #111; color: #0f0; padding: 2rem; }
+  h2 { color: #fff; }
+  pre { background: #000; padding: 1rem; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  .id { color: #ffff00; font-size: 1.3rem; font-weight: bold; cursor: pointer; padding: 0.5rem; background: #222; border-radius: 4px; display: inline-block; margin: 0.5rem 0; }
+  .id:hover { background: #333; }
+  button { margin-top: 1rem; background: #0f0; color: #000; border: none; padding: 0.5rem 1.5rem; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 1rem; }
+  .step { margin-bottom: 1.5rem; padding: 1rem; border: 1px solid #0f04; border-radius: 8px; }
+  label { color: #aaa; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<h2>🔍 Retro's Vault — Bin ID Finder</h2>
+
+<div class="step">
+  <label>STEP 1 — LocalStorage (this browser)</label>
+  <pre id="local">Checking...</pre>
+</div>
+
+<div class="step">
+  <label>STEP 2 — JSONBin Collections API (all bins on account)</label>
+  <pre id="collections">Fetching...</pre>
+</div>
+
+<div class="step">
+  <label>STEP 3 — Found Bin ID (click to copy)</label>
+  <div id="result">Searching...</div>
+</div>
+
+<div class="step" style="border-color:#ff04;">
+  <label style="color:#ff0;">STEP 4 — Once you have the ID, open app.js and replace line 11 with:</label>
+  <pre id="instruction">Waiting for ID...</pre>
+</div>
+
+<script>
+const MASTER_KEY = "$2a$10$s.lE75MS8Z7ztUzoPxbkeOA0du6dy0rXIHhoxalu7RkjJWX52e2Mi";
+
+// Step 1: Check localStorage
+const stored = localStorage.getItem('retroVaultBinId');
+document.getElementById('local').textContent = stored 
+  ? `Found: ${stored}` 
+  : "Not found in this browser's localStorage";
+
+// Step 2 & 3: Query JSONBin
+async function findBin() {
+  let foundId = stored || null;
+
+  try {
+    // Try collections/bins endpoint
+    const res = await fetch("https://api.jsonbin.io/v3/c/bins", {
+      headers: { "X-Master-Key": MASTER_KEY }
+    });
+    const text = await res.text();
+    document.getElementById('collections').textContent = `Status: ${res.status}\n${text}`;
+
+    if (res.ok) {
+      const data = JSON.parse(text);
+      if (Array.isArray(data) && data.length > 0) {
+        const match = data.find(b => 
+          (b.snippetMeta && b.snippetMeta.name === 'retros-vault-pins') || 
+          (b.name === 'retros-vault-pins')
+        ) || data[0];
+        const id = (match.snippetMeta && match.snippetMeta.id) || match.id || match._id;
+        if (id) foundId = id;
+      }
+    }
+  } catch (e) {
+    document.getElementById('collections').textContent = "Error: " + e.message;
+  }
+
+  // Display result
+  if (foundId) {
+    const el = document.createElement('span');
+    el.className = 'id';
+    el.textContent = foundId;
+    el.title = 'Click to copy';
+    el.onclick = () => {
+      navigator.clipboard.writeText(foundId).then(() => alert('Copied! Now paste it in app.js'));
+    };
+    document.getElementById('result').innerHTML = '';
+    document.getElementById('result').appendChild(el);
+    document.getElementById('instruction').textContent = 
+      `// In app.js, change line 11 from:\nlet BIN_ID = null;\n\n// To:\nconst BIN_ID = "${foundId}";`;
+  } else {
+    document.getElementById('result').textContent = "❌ No bin found. Open the main site first to create one, then come back here.";
+    document.getElementById('instruction').textContent = "Open index.html first to create a bin.";
+  }
+}
+
+findBin();
+</script>
+</body>
+</html>
