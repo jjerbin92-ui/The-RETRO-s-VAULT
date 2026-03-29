@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The RETRO's VAULT</title>
+    <meta name="description" content="Discover the best curated products, from gadgets to fashion.">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Font Awesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+    <!-- Navigation Header -->
+    <header class="glass-header">
+        <div class="logo">
+            <i class="fa-solid fa-fingerprint" style="color: #1a1a1a; font-size: 1.4rem;"></i> 
+            <span style="font-weight: 800; letter-spacing: -0.5px; color: #1a1a1a; text-transform: uppercase;">The RETRO's VAULT</span>
+        </div>
+        
+        <div class="search-bar">
+            <i class="fa-solid fa-magnifying-glass search-icon"></i>
+            <input type="text" id="searchInput" placeholder="Search for gadgets, fashion, home decor..." autocomplete="off">
+        </div>
+
+        <nav class="nav-links">
+            <button class="nav-btn category-btn active" data-category="all">For You</button>
+            <button class="nav-btn category-btn" data-category="gadgets">Gadgets</button>
+            <button class="nav-btn category-btn" data-category="fashion">Fashion</button>
+            <button class="nav-btn category-btn" data-category="home">Home Decor</button>
+            <button class="nav-btn icon-btn wishlist-btn" id="wishlistToggle" title="View Wishlist">
+                <i class="fa-solid fa-bookmark"></i>
+                <span class="badge" id="wishlistCount">0</span>
+            </button>
+            <a href="admin.html" class="nav-btn icon-btn" title="Admin Access" style="font-size: 0.95rem; color: #ccc;"><i class="fa-solid fa-lock"></i></a>
+        </nav>
+        
+        <!-- Mobile Menu Toggle -->
+        <button class="mobile-menu-btn" id="mobileMenuBtn">
+            <i class="fa-solid fa-bars"></i>
+        </button>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-container">
+        
+        <!-- Category Filter for Mobile -->
+        <div class="mobile-categories" id="mobileCategories">
+            <button class="nav-btn category-btn active" data-category="all">For You</button>
+            <button class="nav-btn category-btn" data-category="gadgets">Gadgets</button>
+            <button class="nav-btn category-btn" data-category="fashion">Fashion</button>
+            <button class="nav-btn category-btn" data-category="home">Home Decor</button>
+            <a href="admin.html" class="nav-btn icon-btn" title="Admin Access" style="font-size: 0.95rem; color: #ccc; margin-left: 1rem;"><i class="fa-solid fa-lock"></i></a>
+        </div>
+
+        <!-- Wishlist Notification Toast -->
+        <div class="toast" id="toast">Added to wishlist!</div>
+
+        <!-- Masonry Grid Container -->
+        <div class="masonry-grid" id="productGrid">
+            <!-- Product cards will be dynamically injected here by app.js -->
+        </div>
+
+        <!-- Empty State (No Results) -->
+        <div class="empty-state hidden" id="emptyState">
+            <i class="fa-regular fa-face-frown-open"></i>
+            <h2>No pins found</h2>
+            <p>Try searching for something else or browse another category.</p>
+        </div>
+
+    </main>
+
+    <!-- App Logic -->
+    <script src="app.js"></script>
+</body>
+</html>
