@@ -7,7 +7,8 @@ const LOCAL_PINS_KEY = "retrosVaultPins";       // localStorage key for pins
 const LOCAL_BIN_KEY  = "retroVaultBinId";       // localStorage key for bin ID
 
 // ✅ Hardcoded Bin ID — ALL devices always use this same bin
-let BIN_ID = "69c904256860e0745bffaf1c";
+// ✅ Hardcoded Bin ID — ALL devices always use this same bin
+const BIN_ID = "69c904256860e0745bffaf1c";
 
 // ============================================================
 // STATE
@@ -42,41 +43,17 @@ const catInp            = document.getElementById('pCategory');
 const imgInp            = document.getElementById('pImage');
 const submitBtn         = document.getElementById('submitBtn');
 const adminProductList  = document.getElementById('adminProductList');
+const syncStatus        = document.getElementById('syncStatus');
 
 // ============================================================
-// JSONBIN CLOUD SYNC (background — never blocks the UI)
+// JSONBIN CLOUD SYNC
 // ============================================================
-
-async function cloudCreateBin() {
-    try {
-        const res = await fetch(JSONBIN_BASE, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Master-Key': MASTER_KEY,
-                'X-Bin-Name': 'retros-vault-pins',
-                'X-Bin-Private': 'false'
-            },
-            body: JSON.stringify(currentProducts)
-        });
-        const data = await res.json();
-        if (data.metadata && data.metadata.id) {
-            BIN_ID = data.metadata.id;
-            localStorage.setItem(LOCAL_BIN_KEY, BIN_ID);
-            console.log('☁️ Cloud bin created:', BIN_ID);
-        }
-    } catch (e) {
-        console.warn('Cloud create failed (offline?):', e.message);
-    }
-}
 
 async function cloudPush(pins) {
-    if (!BIN_ID) {
-        await cloudCreateBin();
-        return;
-    }
+    if (!BIN_ID) return;
+    updateSyncUI('syncing', 'Syncing...');
     try {
-        await fetch(`${JSONBIN_BASE}/${BIN_ID}`, {
+        const res = await fetch(`${JSONBIN_BASE}/${BIN_ID}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -84,25 +61,57 @@ async function cloudPush(pins) {
             },
             body: JSON.stringify(pins)
         });
-        console.log('☁️ Cloud synced');
+
+        if (!res.ok) {
+            const errorBody = await res.json().catch(() => ({}));
+            if (res.status === 413) throw new Error('Database full (Reduce images)');
+            throw new Error(errorBody.message || `Push failed (Status: ${res.status})`);
+        }
+
+        console.log('☁️ Cloud synced successfully');
+        updateSyncUI('synced', 'Synced');
+        return true;
     } catch (e) {
-        console.warn('Cloud push failed (offline?):', e.message);
+        console.error('Cloud push failed:', e.message);
+        updateSyncUI('offline', 'Sync Error');
+        return false;
     }
 }
 
 async function cloudPull() {
     if (!BIN_ID) return null;
+    updateSyncUI('syncing', 'Syncing...');
     try {
-        const res = await fetch(`${JSONBIN_BASE}/${BIN_ID}/latest`, {
+        const res = await fetch(`${JSONBIN_BASE}/${BIN_ID}/latest?t=${Date.now()}`, {
             headers: { 'X-Master-Key': MASTER_KEY }
         });
-        if (!res.ok) return null;
+
+        if (!res.ok) {
+            if (res.status === 404) return []; // Bin exists but might be empty
+            throw new Error(`Pull failed (${res.status})`);
+        }
+
         const data = await res.json();
-        return data.record || null;
+        updateSyncUI('synced', 'Synced');
+        
+        // Return record or empty array if record doesn't exist
+        return data.record || []; 
     } catch (e) {
-        console.warn('Cloud pull failed (offline?):', e.message);
+        console.warn('Cloud pull failed:', e.message);
+        updateSyncUI('offline', 'Offline');
         return null;
     }
+}
+
+function updateSyncUI(state, text) {
+    if (!syncStatus) return;
+    syncStatus.className = `sync-status ${state}`;
+    syncStatus.querySelector('span').textContent = text;
+    
+    const icon = syncStatus.querySelector('i');
+    if (state === 'syncing') icon.className = 'fa-solid fa-arrows-rotate fa-spin';
+    else if (state === 'synced') icon.className = 'fa-solid fa-cloud';
+    else icon.className = 'fa-solid fa-cloud-slash';
 }
 
 // ============================================================
@@ -115,28 +124,22 @@ async function init() {
     // 1. Show local pins IMMEDIATELY (no loading delay)
     filterAndRender();
 
-    // 2. Try to sync from cloud in the background
-    syncFromCloud();
+    // 2. Fetch all pins from cloud immediately on load
+    await loadPins();
 }
 
-async function syncFromCloud() {
-    if (!BIN_ID) {
-        // No bin yet — push local data to create one
-        if (currentProducts.length > 0) {
-            await cloudCreateBin();
-        }
-        return;
-    }
-
+async function loadPins() {
+    // Optionally: show a small sync status in console or UI
     const cloudPins = await cloudPull();
-    if (!cloudPins) return; // offline or error — keep showing local
-
-    // Merge: use cloud data if it has more/newer pins
-    if (cloudPins.length > currentProducts.length) {
+    
+    // If we got valid data from the cloud, it's the source of truth
+    if (cloudPins && Array.isArray(cloudPins)) {
         currentProducts = cloudPins;
         localStorage.setItem(LOCAL_PINS_KEY, JSON.stringify(currentProducts));
         filterAndRender();
-        console.log('☁️ Synced from cloud —', cloudPins.length, 'pins loaded');
+        console.log('☁️ Vault synced with cloud —', cloudPins.length, 'pins loaded');
+    } else {
+        console.log('⚠️ Could not sync with cloud. Using local data.');
     }
 }
 
@@ -290,7 +293,7 @@ function setupEventListeners() {
     // Submit New Pin
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        submitBtn.textContent = 'Pinning...';
+        submitBtn.innerHTML = '<i class="fa-solid fa-arrows-rotate fa-spin"></i> Syncing...';
         submitBtn.disabled = true;
 
         try {
@@ -309,22 +312,40 @@ function setupEventListeners() {
                 createdAt: Date.now()
             };
 
-            // Save locally FIRST (instant, always works)
-            currentProducts.unshift(newPin);
-            localStorage.setItem(LOCAL_PINS_KEY, JSON.stringify(currentProducts));
+            // 1. Pull latest to avoid overwritting concurrent changes
+            const latestPins = await cloudPull();
+            
+            if (latestPins === null) {
+                // Critical error: cannot reach cloud
+                showToast("⚠️ API Error: Could not reach cloud database.");
+                submitBtn.textContent = 'Pin Product';
+                submitBtn.disabled = false;
+                return;
+            }
 
-            showToast("✅ Pin added to Vault!");
-            form.reset();
+            // 2. Merge local new pin with cloud pins
+            const updatedPins = [newPin, ...latestPins];
+
+            // 3. Push to cloud
+            const success = await cloudPush(updatedPins);
+
+            if (success) {
+                currentProducts = updatedPins;
+                localStorage.setItem(LOCAL_PINS_KEY, JSON.stringify(currentProducts));
+                showToast("✅ Successfully pinned and visible to all!");
+                form.reset();
+                loadAdminPins();
+                filterAndRender();
+            } else {
+                showToast("❌ Sync failed. Database might be full.");
+            }
+
             submitBtn.textContent = 'Pin Product';
             submitBtn.disabled = false;
-            loadAdminPins();
-
-            // Push to cloud in background (doesn't block UI)
-            cloudPush(currentProducts);
 
         } catch (error) {
             console.error("Error saving pin:", error);
-            showToast("❌ Error adding pin. Try again.");
+            showToast("❌ Error: " + error.message);
             submitBtn.textContent = 'Pin Product';
             submitBtn.disabled = false;
         }
@@ -399,17 +420,34 @@ function loadAdminPins() {
 // ============================================================
 async function deleteAdminPin(id) {
     if (!confirm("Are you sure you want to permanently delete this pin?")) return;
-    currentProducts = currentProducts.filter(p => p.id !== id);
+    
+    // ☁️ SYNC FLOW: Pull latest -> Filter -> Push
+    const latestPins = await cloudPull();
+    
+    if (latestPins === null) {
+        showToast("⚠️ Sync Error: Could not delete from cloud. Try again later.");
+        return;
+    }
+
+    if (Array.isArray(latestPins)) {
+        currentProducts = latestPins.filter(p => p.id !== id);
+    } else {
+        currentProducts = currentProducts.filter(p => p.id !== id);
+    }
+
     localStorage.setItem(LOCAL_PINS_KEY, JSON.stringify(currentProducts));
-    cloudPush(currentProducts); // sync to cloud
-    showToast("Pin deleted!");
+    
+    await cloudPush(currentProducts);
+    
+    showToast("Pin deleted and synced!");
     loadAdminPins();
+    filterAndRender(); // Refresh the main store grid instantly
 }
 
 // ============================================================
 // IMAGE COMPRESSION
 // ============================================================
-function compressImage(file, maxSize = 800) {
+function compressImage(file, maxSize = 600) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.readAsDataURL(file);
@@ -420,6 +458,8 @@ function compressImage(file, maxSize = 800) {
                 const canvas = document.createElement('canvas');
                 let width = img.width;
                 let height = img.height;
+                
+                // Aggressive downsizing
                 if (width > height && width > maxSize) {
                     height *= maxSize / width;
                     width = maxSize;
@@ -427,11 +467,15 @@ function compressImage(file, maxSize = 800) {
                     width *= maxSize / height;
                     height = maxSize;
                 }
+                
                 canvas.width = width;
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
+                
+                // Draw and compress
                 ctx.drawImage(img, 0, 0, width, height);
-                resolve(canvas.toDataURL('image/jpeg', 0.7));
+                // 0.5 quality for better space saving in JSON bin
+                resolve(canvas.toDataURL('image/jpeg', 0.5));
             };
             img.onerror = () => reject(new Error('Failed to load image'));
         };
@@ -442,4 +486,12 @@ function compressImage(file, maxSize = 800) {
 // ============================================================
 // RUN APP
 // ============================================================
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', () => {
+    init();
+
+    // 🔄 Periodic Background Sync (every 60 seconds)
+    // Keeps products updated if other devices add new content
+    setInterval(() => {
+        loadPins();
+    }, 60000);
+});
